@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MySQL 与 TiDB 兼容性报告</title>
+    <style>
+        :root {
+            --bg: #f6f8fb;
+            --card: #ffffff;
+            --text: #1f2937;
+            --muted: #6b7280;
+            --border: #e5e7eb;
+            --ok: #0f766e;
+            --ok-bg: #ccfbf1;
+            --partial: #b45309;
+            --partial-bg: #fef3c7;
+            --bad: #b91c1c;
+            --bad-bg: #fee2e2;
+            --unknown: #374151;
+            --unknown-bg: #e5e7eb;
+        }
+
+        body {
+            margin: 0;
+            font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        .container {
+            max-width: 1280px;
+            margin: 24px auto;
+            padding: 0 16px 24px;
+        }
+
+        .header {
+            background: linear-gradient(120deg, #0f172a 0%, #1d4ed8 100%);
+            color: #fff;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 16px;
+        }
+
+        .header h1 {
+            margin: 0 0 10px;
+            font-size: 24px;
+        }
+
+        .meta {
+            font-size: 14px;
+            opacity: 0.95;
+            line-height: 1.7;
+        }
+
+        .actions {
+            margin-top: 12px;
+        }
+
+        .actions a {
+            display: inline-block;
+            background: #fff;
+            color: #1d4ed8;
+            text-decoration: none;
+            font-weight: 600;
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin-right: 10px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .kpi {
+            background: var(--card);
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            padding: 14px;
+        }
+
+        .kpi .label {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .kpi .value {
+            margin-top: 6px;
+            font-size: 30px;
+            font-weight: 700;
+        }
+
+        .section {
+            background: var(--card);
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            padding: 14px;
+            margin-bottom: 14px;
+        }
+
+        .section h2 {
+            margin: 0 0 12px;
+            font-size: 18px;
+        }
+
+        .section h3 {
+            margin: 16px 0 8px;
+            font-size: 15px;
+            color: #111827;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            table-layout: fixed;
+            word-break: break-word;
+        }
+
+        th, td {
+            border: 1px solid var(--border);
+            padding: 8px;
+            vertical-align: top;
+            text-align: left;
+        }
+
+        th {
+            background: #f8fafc;
+            font-weight: 600;
+        }
+
+        .badge {
+            display: inline-block;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .COMPATIBLE {
+            color: var(--ok);
+            background: var(--ok-bg);
+        }
+
+        .PARTIAL {
+            color: var(--partial);
+            background: var(--partial-bg);
+        }
+
+        .INCOMPATIBLE {
+            color: var(--bad);
+            background: var(--bad-bg);
+        }
+
+        .UNKNOWN {
+            color: var(--unknown);
+            background: var(--unknown-bg);
+        }
+
+        .warn-list {
+            margin: 0;
+            padding-left: 18px;
+            color: #9a3412;
+        }
+
+        .obj-block {
+            margin: 0 0 10px;
+            padding: 8px;
+            border: 1px dashed #d1d5db;
+            border-radius: 8px;
+            background: #fafafa;
+        }
+
+        .obj-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .obj-reason {
+            color: #4b5563;
+            font-size: 12px;
+        }
+
+        details {
+            margin-top: 6px;
+        }
+
+        pre {
+            margin: 6px 0 0;
+            white-space: pre-wrap;
+            font-size: 12px;
+            line-height: 1.5;
+            background: #111827;
+            color: #e5e7eb;
+            border-radius: 8px;
+            padding: 8px;
+        }
+
+        .empty {
+            color: var(--muted);
+            font-size: 13px;
+            padding: 6px 0;
+        }
+
+        @media (max-width: 980px) {
+            .grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 640px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header h1 {
+                font-size: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <h1>MySQL 使用对象与 TiDB 兼容性报告</h1>
+        <div class="meta">
+            <div>扫描范围：<strong th:text="${result.scannedSchema}">ALL_NON_SYSTEM_SCHEMAS</strong></div>
+            <div>生成时间：<strong th:text="${#temporals.format(result.generatedAt, 'yyyy-MM-dd HH:mm:ss')}">2026-03-20 18:00:00</strong></div>
+        </div>
+        <div class="actions">
+            <a th:if="${result.scannedSchema == 'ALL_NON_SYSTEM_SCHEMAS'}" href="/report">刷新报告</a>
+            <a th:unless="${result.scannedSchema == 'ALL_NON_SYSTEM_SCHEMAS'}"
+               th:href="|/report?schema=${result.scannedSchema}|">刷新报告</a>
+            <a th:if="${result.scannedSchema == 'ALL_NON_SYSTEM_SCHEMAS'}" href="/report/export">导出 HTML</a>
+            <a th:unless="${result.scannedSchema == 'ALL_NON_SYSTEM_SCHEMAS'}"
+               th:href="|/report/export?schema=${result.scannedSchema}|">导出 HTML</a>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="kpi"><div class="label">兼容</div><div class="value" th:text="${summary.compatibleCount}">0</div></div>
+        <div class="kpi"><div class="label">部分兼容</div><div class="value" th:text="${summary.partialCount}">0</div></div>
+        <div class="kpi"><div class="label">不兼容</div><div class="value" th:text="${summary.incompatibleCount}">0</div></div>
+        <div class="kpi"><div class="label">未知</div><div class="value" th:text="${summary.unknownCount}">0</div></div>
+    </div>
+
+    <div class="section">
+        <h2>兼容性总览</h2>
+        <table>
+            <thead>
+            <tr>
+                <th style="width: 10%">类别</th>
+                <th style="width: 16%">MySQL 已使用对象/配置</th>
+                <th style="width: 10%">TiDB 兼容性</th>
+                <th style="width: 18%">判断依据</th>
+                <th style="width: 18%">建议动作</th>
+                <th style="width: 28%">不兼容对象明细</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="item : ${result.compatibilityItems}">
+                <td th:text="${item.category}">字符集</td>
+                <td th:text="${item.mysqlUsage}">utf8mb4</td>
+                <td><span th:class="|badge ${item.tidbCompatibility}|" th:text="${item.tidbCompatibility}">PARTIAL</span></td>
+                <td th:text="${item.evidence}">说明</td>
+                <td th:text="${item.recommendation}">建议</td>
+                <td>
+                    <div class="empty" th:if="${#lists.isEmpty(item.incompatibleObjects)}">无</div>
+                    <div class="obj-block" th:each="obj : ${item.incompatibleObjects}">
+                        <div class="obj-title">
+                            <span th:text="${obj.objectType}">TABLE</span>
+                            <span th:text="| ${obj.schemaName}.${obj.objectName}|"> demo_db.orders </span>
+                        </div>
+                        <div class="obj-reason" th:text="${obj.reason}">原因</div>
+                        <details th:if="${obj.definition != null and !#strings.isEmpty(obj.definition)}">
+                            <summary>查看表结构</summary>
+                            <pre th:text="${obj.definition}"></pre>
+                        </details>
+                    </div>
+                </td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>MySQL 服务器基础信息</h2>
+        <table>
+            <thead><tr><th>变量</th><th>值</th></tr></thead>
+            <tbody>
+            <tr th:each="entry : ${result.serverVariables}">
+                <td th:text="${entry.key}">version</td>
+                <td th:text="${entry.value}">8.4.0</td>
+            </tr>
+            <tr>
+                <td>transaction_isolation (global/session)</td>
+                <td th:text="|${result.isolationLevels['global']} / ${result.isolationLevels['session']}|">REPEATABLE-READ / REPEATABLE-READ</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>字符集与排序规则使用情况</h2>
+        <h3>Schema 默认字符集</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.schemaCharsets)}">无数据</div>
+        <table th:if="${!#lists.isEmpty(result.schemaCharsets)}">
+            <thead><tr><th>字符集</th><th>排序规则</th><th>Schema 数量</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.schemaCharsets}">
+                <td th:text="${row['charset_name']}">utf8mb4</td>
+                <td th:text="${row['collation_name']}">utf8mb4_general_ci</td>
+                <td th:text="${row['schema_count']}">1</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>表排序规则分布</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.tableCollations)}">无数据</div>
+        <table th:if="${!#lists.isEmpty(result.tableCollations)}">
+            <thead><tr><th>排序规则</th><th>表数量</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.tableCollations}">
+                <td th:text="${row['collation_name']}">utf8mb4_general_ci</td>
+                <td th:text="${row['table_count']}">100</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>列字符集与排序规则分布</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.columnCharsets)}">无数据</div>
+        <table th:if="${!#lists.isEmpty(result.columnCharsets)}">
+            <thead><tr><th>字符集</th><th>排序规则</th><th>列数量</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.columnCharsets}">
+                <td th:text="${row['charset_name']}">utf8mb4</td>
+                <td th:text="${row['collation_name']}">utf8mb4_general_ci</td>
+                <td th:text="${row['column_count']}">500</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>存储引擎与 SQL 模式</h2>
+        <h3>存储引擎</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.storageEngines)}">无数据</div>
+        <table th:if="${!#lists.isEmpty(result.storageEngines)}">
+            <thead><tr><th>引擎</th><th>表数量</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.storageEngines}">
+                <td th:text="${row['engine_name']}">InnoDB</td>
+                <td th:text="${row['table_count']}">200</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>SQL_MODE</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.sqlModeRows)}">无数据</div>
+        <table th:if="${!#lists.isEmpty(result.sqlModeRows)}">
+            <thead><tr><th>global_sql_mode</th><th>session_sql_mode</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.sqlModeRows}">
+                <td th:text="${row['global_sql_mode']}">ONLY_FULL_GROUP_BY</td>
+                <td th:text="${row['session_sql_mode']}">ONLY_FULL_GROUP_BY</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>临时表与自定义变量</h2>
+        <h3>临时表统计变量</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.tempTableStatus)}">无数据</div>
+        <table th:if="${!#lists.isEmpty(result.tempTableStatus)}">
+            <thead><tr><th>变量名</th><th>值</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.tempTableStatus}">
+                <td th:text="${row['Variable_name']}">Created_tmp_tables</td>
+                <td th:text="${row['Value']}">1000</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>临时表配置变量</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.tempTableVariables)}">无数据</div>
+        <table th:if="${!#lists.isEmpty(result.tempTableVariables)}">
+            <thead><tr><th>变量名</th><th>值</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.tempTableVariables}">
+                <td th:text="${row['Variable_name']}">tmp_table_size</td>
+                <td th:text="${row['Value']}">16777216</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>显式临时表证据（对象定义）</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.tempTableEvidence)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.tempTableEvidence)}">
+            <thead><tr><th>schema</th><th>对象名</th><th>对象类型</th><th>来源字段</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.tempTableEvidence}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['object_name']}">sp_tmp</td>
+                <td th:text="${row['object_type']}">PROCEDURE</td>
+                <td th:text="${row['source']}">ROUTINE_DEFINITION</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>自定义变量使用证据</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.userVariableEvidence)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.userVariableEvidence)}">
+            <thead><tr><th>schema</th><th>对象名</th><th>详情</th><th>来源</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.userVariableEvidence}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['object_name']}">var_x</td>
+                <td th:text="${row['detail']}">type=PROCEDURE</td>
+                <td th:text="${row['source']}">ROUTINE_DEFINITION</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>可编程对象（函数/过程/触发器/事件/Sequence）</h2>
+        <h3>MySQL UDF (mysql.func)</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.udfFunctions)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.udfFunctions)}">
+            <thead><tr><th>函数名</th><th>共享库</th><th>类型</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.udfFunctions}">
+                <td th:text="${row['function_name']}">my_udf</td>
+                <td th:text="${row['shared_library']}">lib_udf.so</td>
+                <td th:text="${row['function_type']}">function</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>存储函数</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.storedFunctions)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.storedFunctions)}">
+            <thead><tr><th>schema</th><th>函数名</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.storedFunctions}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['routine_name']}">f_total</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>存储过程</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.storedProcedures)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.storedProcedures)}">
+            <thead><tr><th>schema</th><th>过程名</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.storedProcedures}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['routine_name']}">p_sync</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>触发器</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.triggers)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.triggers)}">
+            <thead><tr><th>schema</th><th>触发器名</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.triggers}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['trigger_name']}">trg_order</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>事件(Event)</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.events)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.events)}">
+            <thead><tr><th>schema</th><th>事件名</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.events}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['event_name']}">ev_cleanup</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>Sequence</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.sequences)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.sequences)}">
+            <thead><tr><th>schema</th><th>序列名</th><th>数据类型</th><th>起始值</th><th>步长</th><th>循环</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.sequences}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['sequence_name']}">seq_order_id</td>
+                <td th:text="${row['data_type']}">bigint</td>
+                <td th:text="${row['start_value']}">1</td>
+                <td th:text="${row['increment_value']}">1</td>
+                <td th:text="${row['cycle_option']}">NO</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>高级特性使用（GIS / FULLTEXT / XML）</h2>
+
+        <h3>空间列（Geometry/Point/Polygon 等）</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.spatialColumns)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.spatialColumns)}">
+            <thead><tr><th>schema</th><th>表名</th><th>列名</th><th>数据类型</th><th>列定义</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.spatialColumns}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['table_name']}">geo_store</td>
+                <td th:text="${row['column_name']}">shape</td>
+                <td th:text="${row['data_type']}">geometry</td>
+                <td th:text="${row['column_type']}">geometry</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>SPATIAL 索引</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.spatialIndexes)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.spatialIndexes)}">
+            <thead><tr><th>schema</th><th>表名</th><th>索引名</th><th>列名</th><th>索引类型</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.spatialIndexes}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['table_name']}">geo_store</td>
+                <td th:text="${row['index_name']}">idx_geo</td>
+                <td th:text="${row['column_name']}">shape</td>
+                <td th:text="${row['index_type']}">SPATIAL</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>FULLTEXT 索引</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.fulltextIndexes)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.fulltextIndexes)}">
+            <thead><tr><th>schema</th><th>表名</th><th>索引名</th><th>列名</th><th>索引类型</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.fulltextIndexes}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['table_name']}">article</td>
+                <td th:text="${row['index_name']}">idx_fulltext_content</td>
+                <td th:text="${row['column_name']}">content</td>
+                <td th:text="${row['index_type']}">FULLTEXT</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>GIS 函数使用证据</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.gisFunctionEvidence)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.gisFunctionEvidence)}">
+            <thead><tr><th>schema</th><th>对象名</th><th>对象类型</th><th>来源字段</th><th>标记</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.gisFunctionEvidence}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['object_name']}">sp_geo_stats</td>
+                <td th:text="${row['object_type']}">PROCEDURE</td>
+                <td th:text="${row['source']}">ROUTINE_DEFINITION</td>
+                <td th:text="${row['detail']}">GIS_FUNCTION</td>
+            </tr>
+            </tbody>
+        </table>
+
+        <h3>XML 函数使用证据</h3>
+        <div class="empty" th:if="${#lists.isEmpty(result.xmlFunctionEvidence)}">未检测到</div>
+        <table th:if="${!#lists.isEmpty(result.xmlFunctionEvidence)}">
+            <thead><tr><th>schema</th><th>对象名</th><th>对象类型</th><th>来源字段</th><th>标记</th></tr></thead>
+            <tbody>
+            <tr th:each="row : ${result.xmlFunctionEvidence}">
+                <td th:text="${row['schema_name']}">app</td>
+                <td th:text="${row['object_name']}">sp_xml_parse</td>
+                <td th:text="${row['object_type']}">PROCEDURE</td>
+                <td th:text="${row['source']}">ROUTINE_DEFINITION</td>
+                <td th:text="${row['detail']}">XML_FUNCTION</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section" th:if="${!#lists.isEmpty(result.queryWarnings)}">
+        <h2>扫描告警</h2>
+        <ul class="warn-list">
+            <li th:each="warn : ${result.queryWarnings}" th:text="${warn}">权限不足</li>
+        </ul>
+    </div>
+</div>
+</body>
+</html>

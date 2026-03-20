@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: mysql-tidb-report
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  thymeleaf:
+    cache: false
+
+server:
+  port: 8080
+
+report:
+  output-dir: ./report-output
