@@ -109,3 +109,9 @@ host=192.12.x.x;port=3306;password=xxx;user=xxx;
 
 - 部分兼容项需结合目标 TiDB 版本二次校验。
 - 如果权限不足，页面会在“扫描告警”中展示失败查询。
+
+## SQL 管理
+
+- 检测 SQL 已统一放在文件：`src/main/resources/sql/mysql-inspection.sql`
+- 每条 SQL 通过 `-- name: xxx` 标识，代码按名称加载执行
+- 若要新增检测项，建议先在该 SQL 文件中新增语句，再在服务层按名称调用

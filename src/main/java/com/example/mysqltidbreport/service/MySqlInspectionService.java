@@ -5,15 +5,27 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class MySqlInspectionService {
+
+    private static final String SQL_RESOURCE = "/sql/mysql-inspection.sql";
+    private static final String SQL_MARKER = "-- name:";
+    private static final Map<String, String> SQL_TEMPLATES = loadSqlTemplates();
 
     private static final String NON_SYSTEM_SCHEMA_FILTER =
             " NOT IN ('information_schema','mysql','performance_schema','sys') ";
@@ -39,81 +51,49 @@ public class MySqlInspectionService {
         result.setSchemaCharsets(queryList(
                 result,
                 "Schema charsets",
-                "SELECT DEFAULT_CHARACTER_SET_NAME AS charset_name, " +
-                        "DEFAULT_COLLATION_NAME AS collation_name, COUNT(*) AS schema_count " +
-                        "FROM information_schema.SCHEMATA " +
-                        "WHERE SCHEMA_NAME " + schemaPredicate(schema) +
-                        "GROUP BY DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME " +
-                        "ORDER BY schema_count DESC",
+                sql("schema_charsets", schema),
                 schemaArg(schema)
         ));
 
         result.setTableCollations(queryList(
                 result,
                 "Table collations",
-                "SELECT TABLE_COLLATION AS collation_name, COUNT(*) AS table_count " +
-                        "FROM information_schema.TABLES " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) + "AND TABLE_TYPE='BASE TABLE' " +
-                        "GROUP BY TABLE_COLLATION ORDER BY table_count DESC",
+                sql("table_collations", schema),
                 schemaArg(schema)
         ));
 
         result.setColumnCharsets(queryList(
                 result,
                 "Column charsets",
-                "SELECT CHARACTER_SET_NAME AS charset_name, COLLATION_NAME AS collation_name, " +
-                        "COUNT(*) AS column_count " +
-                        "FROM information_schema.COLUMNS " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) +
-                        "AND CHARACTER_SET_NAME IS NOT NULL " +
-                        "GROUP BY CHARACTER_SET_NAME, COLLATION_NAME " +
-                        "ORDER BY column_count DESC",
+                sql("column_charsets", schema),
                 schemaArg(schema)
         ));
 
         result.setStorageEngines(queryList(
                 result,
                 "Storage engines",
-                "SELECT ENGINE AS engine_name, COUNT(*) AS table_count " +
-                        "FROM information_schema.TABLES " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) + "AND TABLE_TYPE='BASE TABLE' " +
-                        "GROUP BY ENGINE ORDER BY table_count DESC",
+                sql("storage_engines", schema),
                 schemaArg(schema)
         ));
 
         result.setTableCharsetCollationDetails(queryList(
                 result,
                 "Table charset collation details",
-                "SELECT t.TABLE_SCHEMA AS schema_name, t.TABLE_NAME AS table_name, " +
-                        "t.TABLE_COLLATION AS table_collation, cca.CHARACTER_SET_NAME AS table_charset " +
-                        "FROM information_schema.TABLES t " +
-                        "LEFT JOIN information_schema.COLLATION_CHARACTER_SET_APPLICABILITY cca " +
-                        "ON t.TABLE_COLLATION = cca.COLLATION_NAME " +
-                        "WHERE t.TABLE_SCHEMA " + schemaPredicate(schema) + "AND t.TABLE_TYPE='BASE TABLE' " +
-                        "ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME",
+                sql("table_charset_collation_details", schema),
                 schemaArg(schema)
         ));
 
         result.setColumnCharsetCollationDetails(queryList(
                 result,
                 "Column charset collation details",
-                "SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS table_name, COLUMN_NAME AS column_name, " +
-                        "CHARACTER_SET_NAME AS charset_name, COLLATION_NAME AS collation_name, " +
-                        "COLUMN_TYPE AS column_type " +
-                        "FROM information_schema.COLUMNS " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) +
-                        "AND CHARACTER_SET_NAME IS NOT NULL " +
-                        "ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION",
+                sql("column_charset_collation_details", schema),
                 schemaArg(schema)
         ));
 
         result.setEngineTableDetails(queryList(
                 result,
                 "Engine table details",
-                "SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS table_name, ENGINE AS engine_name " +
-                        "FROM information_schema.TABLES " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) + "AND TABLE_TYPE='BASE TABLE' " +
-                        "ORDER BY TABLE_SCHEMA, TABLE_NAME",
+                sql("engine_table_details", schema),
                 schemaArg(schema)
         ));
 
@@ -122,7 +102,7 @@ public class MySqlInspectionService {
         result.setSqlModeRows(queryList(
                 result,
                 "SQL mode",
-                "SELECT @@GLOBAL.sql_mode AS global_sql_mode, @@SESSION.sql_mode AS session_sql_mode"
+                sql("sql_mode")
         ));
 
         loadTempTableDetails(result, schema);
@@ -136,31 +116,26 @@ public class MySqlInspectionService {
 
     private void loadServerVariables(InspectionResult result) {
         Map<String, String> serverVariables = new LinkedHashMap<>();
-        serverVariables.put("version", queryScalar(result, "version", "SELECT @@version"));
-        serverVariables.put("version_comment", queryScalar(result, "version_comment", "SELECT @@version_comment"));
+        serverVariables.put("version", queryScalar(result, "version", sql("version")));
+        serverVariables.put("version_comment", queryScalar(result, "version_comment", sql("version_comment")));
         serverVariables.put("character_set_server", queryScalar(result, "character_set_server",
-                "SELECT @@character_set_server"));
+                sql("character_set_server")));
         serverVariables.put("collation_server", queryScalar(result, "collation_server",
-                "SELECT @@collation_server"));
+                sql("collation_server")));
         serverVariables.put("lower_case_table_names", queryScalar(result, "lower_case_table_names",
-                "SELECT @@lower_case_table_names"));
+                sql("lower_case_table_names")));
         result.setServerVariables(serverVariables);
     }
 
     private void loadIsolationLevels(InspectionResult result) {
         Map<String, String> isolation = new LinkedHashMap<>();
         try {
-            Map<String, Object> row = jdbcTemplate.queryForMap(
-                    "SELECT @@GLOBAL.transaction_isolation AS global_isolation, " +
-                            "@@SESSION.transaction_isolation AS session_isolation"
-            );
+            Map<String, Object> row = jdbcTemplate.queryForMap(sql("isolation_transaction"));
             isolation.put("global", stringValue(row.get("global_isolation")));
             isolation.put("session", stringValue(row.get("session_isolation")));
         } catch (Exception ignore) {
             try {
-                Map<String, Object> row = jdbcTemplate.queryForMap(
-                        "SELECT @@GLOBAL.tx_isolation AS global_isolation, @@SESSION.tx_isolation AS session_isolation"
-                );
+                Map<String, Object> row = jdbcTemplate.queryForMap(sql("isolation_tx_fallback"));
                 isolation.put("global", stringValue(row.get("global_isolation")));
                 isolation.put("session", stringValue(row.get("session_isolation")));
             } catch (Exception e) {
@@ -174,55 +149,37 @@ public class MySqlInspectionService {
 
     private void loadTempTableDetails(InspectionResult result, String schema) {
         List<Map<String, Object>> statusRows = new ArrayList<>();
-        statusRows.addAll(queryList(result, "Temp status", "SHOW GLOBAL STATUS LIKE 'Created_tmp%'"));
+        statusRows.addAll(queryList(result, "Temp status", sql("temp_status")));
         result.setTempTableStatus(statusRows);
 
         List<Map<String, Object>> tempVars = new ArrayList<>();
-        tempVars.addAll(queryList(result, "tmp_table_size",
-                "SHOW GLOBAL VARIABLES LIKE 'tmp_table_size'"));
-        tempVars.addAll(queryList(result, "max_heap_table_size",
-                "SHOW GLOBAL VARIABLES LIKE 'max_heap_table_size'"));
+        tempVars.addAll(queryList(result, "tmp_table_size", sql("tmp_table_size")));
+        tempVars.addAll(queryList(result, "max_heap_table_size", sql("max_heap_table_size")));
         result.setTempTableVariables(tempVars);
 
         List<Map<String, Object>> evidence = new ArrayList<>();
         evidence.addAll(queryList(
                 result,
                 "Routine temporary tables",
-                "SELECT ROUTINE_SCHEMA AS schema_name, ROUTINE_NAME AS object_name, " +
-                        "ROUTINE_TYPE AS object_type, 'ROUTINE_DEFINITION' AS source " +
-                        "FROM information_schema.ROUTINES " +
-                        "WHERE ROUTINE_SCHEMA " + schemaPredicate(schema) +
-                        "AND ROUTINE_DEFINITION LIKE '%TEMPORARY TABLE%' LIMIT 100",
+                sql("routine_temp_tables", schema),
                 schemaArg(schema)
         ));
         evidence.addAll(queryList(
                 result,
                 "Trigger temporary tables",
-                "SELECT TRIGGER_SCHEMA AS schema_name, TRIGGER_NAME AS object_name, " +
-                        "'TRIGGER' AS object_type, 'ACTION_STATEMENT' AS source " +
-                        "FROM information_schema.TRIGGERS " +
-                        "WHERE TRIGGER_SCHEMA " + schemaPredicate(schema) +
-                        "AND ACTION_STATEMENT LIKE '%TEMPORARY TABLE%' LIMIT 100",
+                sql("trigger_temp_tables", schema),
                 schemaArg(schema)
         ));
         evidence.addAll(queryList(
                 result,
                 "Event temporary tables",
-                "SELECT EVENT_SCHEMA AS schema_name, EVENT_NAME AS object_name, " +
-                        "'EVENT' AS object_type, 'EVENT_DEFINITION' AS source " +
-                        "FROM information_schema.EVENTS " +
-                        "WHERE EVENT_SCHEMA " + schemaPredicate(schema) +
-                        "AND EVENT_DEFINITION LIKE '%TEMPORARY TABLE%' LIMIT 100",
+                sql("event_temp_tables", schema),
                 schemaArg(schema)
         ));
         evidence.addAll(queryList(
                 result,
                 "View temporary tables",
-                "SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS object_name, " +
-                        "'VIEW' AS object_type, 'VIEW_DEFINITION' AS source " +
-                        "FROM information_schema.VIEWS " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) +
-                        "AND VIEW_DEFINITION LIKE '%TEMPORARY TABLE%' LIMIT 100",
+                sql("view_temp_tables", schema),
                 schemaArg(schema)
         ));
         result.setTempTableEvidence(evidence);
@@ -233,47 +190,30 @@ public class MySqlInspectionService {
         evidence.addAll(queryList(
                 result,
                 "User variables by thread",
-                "SELECT VARIABLE_NAME AS object_name, VARIABLE_VALUE AS detail, 'ACTIVE_SESSION' AS source " +
-                        "FROM performance_schema.user_variables_by_thread LIMIT 100"
+                sql("user_variables_by_thread")
         ));
         evidence.addAll(queryList(
                 result,
                 "User variable in routine",
-                "SELECT ROUTINE_SCHEMA AS schema_name, ROUTINE_NAME AS object_name, " +
-                        "CONCAT('type=', ROUTINE_TYPE) AS detail, 'ROUTINE_DEFINITION' AS source " +
-                        "FROM information_schema.ROUTINES " +
-                        "WHERE ROUTINE_SCHEMA " + schemaPredicate(schema) +
-                        "AND ROUTINE_DEFINITION LIKE '%@%' LIMIT 100",
+                sql("user_var_in_routine", schema),
                 schemaArg(schema)
         ));
         evidence.addAll(queryList(
                 result,
                 "User variable in trigger",
-                "SELECT TRIGGER_SCHEMA AS schema_name, TRIGGER_NAME AS object_name, " +
-                        "'TRIGGER' AS detail, 'ACTION_STATEMENT' AS source " +
-                        "FROM information_schema.TRIGGERS " +
-                        "WHERE TRIGGER_SCHEMA " + schemaPredicate(schema) +
-                        "AND ACTION_STATEMENT LIKE '%@%' LIMIT 100",
+                sql("user_var_in_trigger", schema),
                 schemaArg(schema)
         ));
         evidence.addAll(queryList(
                 result,
                 "User variable in event",
-                "SELECT EVENT_SCHEMA AS schema_name, EVENT_NAME AS object_name, " +
-                        "'EVENT' AS detail, 'EVENT_DEFINITION' AS source " +
-                        "FROM information_schema.EVENTS " +
-                        "WHERE EVENT_SCHEMA " + schemaPredicate(schema) +
-                        "AND EVENT_DEFINITION LIKE '%@%' LIMIT 100",
+                sql("user_var_in_event", schema),
                 schemaArg(schema)
         ));
         evidence.addAll(queryList(
                 result,
                 "User variable in view",
-                "SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS object_name, " +
-                        "'VIEW' AS detail, 'VIEW_DEFINITION' AS source " +
-                        "FROM information_schema.VIEWS " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) +
-                        "AND VIEW_DEFINITION LIKE '%@%' LIMIT 100",
+                sql("user_var_in_view", schema),
                 schemaArg(schema)
         ));
         result.setUserVariableEvidence(evidence);
@@ -283,108 +223,77 @@ public class MySqlInspectionService {
         result.setStoredFunctions(queryList(
                 result,
                 "Stored functions",
-                "SELECT ROUTINE_SCHEMA AS schema_name, ROUTINE_NAME AS routine_name " +
-                        "FROM information_schema.ROUTINES " +
-                        "WHERE ROUTINE_SCHEMA " + schemaPredicate(schema) +
-                        "AND ROUTINE_TYPE='FUNCTION' ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME",
+                sql("stored_functions", schema),
                 schemaArg(schema)
         ));
 
         result.setStoredProcedures(queryList(
                 result,
                 "Stored procedures",
-                "SELECT ROUTINE_SCHEMA AS schema_name, ROUTINE_NAME AS routine_name " +
-                        "FROM information_schema.ROUTINES " +
-                        "WHERE ROUTINE_SCHEMA " + schemaPredicate(schema) +
-                        "AND ROUTINE_TYPE='PROCEDURE' ORDER BY ROUTINE_SCHEMA, ROUTINE_NAME",
+                sql("stored_procedures", schema),
                 schemaArg(schema)
         ));
 
         result.setUdfFunctions(queryList(
                 result,
                 "UDF functions",
-                "SELECT name AS function_name, dl AS shared_library, type AS function_type FROM mysql.func"
+                sql("udf_functions")
         ));
 
         result.setTriggers(queryList(
                 result,
                 "Triggers",
-                "SELECT TRIGGER_SCHEMA AS schema_name, TRIGGER_NAME AS trigger_name " +
-                        "FROM information_schema.TRIGGERS " +
-                        "WHERE TRIGGER_SCHEMA " + schemaPredicate(schema) +
-                        "ORDER BY TRIGGER_SCHEMA, TRIGGER_NAME",
+                sql("triggers", schema),
                 schemaArg(schema)
         ));
 
         result.setEvents(queryList(
                 result,
                 "Events",
-                "SELECT EVENT_SCHEMA AS schema_name, EVENT_NAME AS event_name " +
-                        "FROM information_schema.EVENTS " +
-                        "WHERE EVENT_SCHEMA " + schemaPredicate(schema) +
-                        "ORDER BY EVENT_SCHEMA, EVENT_NAME",
+                sql("events", schema),
                 schemaArg(schema)
         ));
     }
 
     private void loadSequences(InspectionResult result, String schema) {
-        String sequenceSql = "SELECT SEQUENCE_SCHEMA AS schema_name, " +
-                "SEQUENCE_NAME AS sequence_name, DATA_TYPE AS data_type, " +
-                "START_VALUE AS start_value, MINIMUM_VALUE AS min_value, MAXIMUM_VALUE AS max_value, " +
-                "`INCREMENT` AS increment_value, CYCLE_OPTION AS cycle_option " +
-                "FROM information_schema.SEQUENCES " +
-                "WHERE SEQUENCE_SCHEMA " + schemaPredicate(schema) +
-                "ORDER BY SEQUENCE_SCHEMA, SEQUENCE_NAME";
-
-        List<Map<String, Object>> rows = safeQueryForList(result, "Sequences", sequenceSql, schemaArg(schema));
+        List<Map<String, Object>> rows = safeQueryForList(
+                result,
+                "Sequences",
+                sql("sequences", schema),
+                schemaArg(schema)
+        );
         if (!rows.isEmpty()) {
             result.setSequences(rows);
             return;
         }
 
-        String fallbackSql = "SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS sequence_name, " +
-                "NULL AS data_type, NULL AS start_value, NULL AS min_value, NULL AS max_value, " +
-                "NULL AS increment_value, NULL AS cycle_option " +
-                "FROM information_schema.TABLES " +
-                "WHERE TABLE_SCHEMA " + schemaPredicate(schema) + "AND TABLE_TYPE='SEQUENCE' " +
-                "ORDER BY TABLE_SCHEMA, TABLE_NAME";
-
-        result.setSequences(safeQueryForList(result, "Sequence tables", fallbackSql, schemaArg(schema)));
+        result.setSequences(safeQueryForList(
+                result,
+                "Sequence tables",
+                sql("sequence_tables_fallback", schema),
+                schemaArg(schema)
+        ));
     }
 
     private void loadAdvancedFeatureEvidence(InspectionResult result, String schema) {
         result.setSpatialColumns(queryList(
                 result,
                 "Spatial columns",
-                "SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS table_name, COLUMN_NAME AS column_name, " +
-                        "DATA_TYPE AS data_type, COLUMN_TYPE AS column_type " +
-                        "FROM information_schema.COLUMNS " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) +
-                        "AND DATA_TYPE IN ('geometry','point','linestring','polygon','multipoint'," +
-                        "'multilinestring','multipolygon','geometrycollection') " +
-                        "ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION",
+                sql("spatial_columns", schema),
                 schemaArg(schema)
         ));
 
         result.setSpatialIndexes(queryList(
                 result,
                 "Spatial indexes",
-                "SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS table_name, INDEX_NAME AS index_name, " +
-                        "INDEX_TYPE AS index_type, COLUMN_NAME AS column_name, SEQ_IN_INDEX AS seq_in_index " +
-                        "FROM information_schema.STATISTICS " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) + "AND INDEX_TYPE='SPATIAL' " +
-                        "ORDER BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX",
+                sql("spatial_indexes", schema),
                 schemaArg(schema)
         ));
 
         result.setFulltextIndexes(queryList(
                 result,
                 "Fulltext indexes",
-                "SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS table_name, INDEX_NAME AS index_name, " +
-                        "INDEX_TYPE AS index_type, COLUMN_NAME AS column_name, SEQ_IN_INDEX AS seq_in_index " +
-                        "FROM information_schema.STATISTICS " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) + "AND INDEX_TYPE='FULLTEXT' " +
-                        "ORDER BY TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX",
+                sql("fulltext_indexes", schema),
                 schemaArg(schema)
         ));
 
@@ -392,45 +301,25 @@ public class MySqlInspectionService {
         gisEvidence.addAll(queryList(
                 result,
                 "GIS function in routines",
-                "SELECT ROUTINE_SCHEMA AS schema_name, ROUTINE_NAME AS object_name, " +
-                        "ROUTINE_TYPE AS object_type, 'ROUTINE_DEFINITION' AS source, 'GIS_FUNCTION' AS detail " +
-                        "FROM information_schema.ROUTINES " +
-                        "WHERE ROUTINE_SCHEMA " + schemaPredicate(schema) +
-                        "AND ROUTINE_DEFINITION IS NOT NULL " +
-                        "AND UPPER(ROUTINE_DEFINITION) REGEXP " + GIS_FUNCTION_REGEX + " LIMIT 200",
+                sql("gis_function_in_routines", schema, Map.of("{{GIS_FUNCTION_REGEX}}", GIS_FUNCTION_REGEX)),
                 schemaArg(schema)
         ));
         gisEvidence.addAll(queryList(
                 result,
                 "GIS function in triggers",
-                "SELECT TRIGGER_SCHEMA AS schema_name, TRIGGER_NAME AS object_name, " +
-                        "'TRIGGER' AS object_type, 'ACTION_STATEMENT' AS source, 'GIS_FUNCTION' AS detail " +
-                        "FROM information_schema.TRIGGERS " +
-                        "WHERE TRIGGER_SCHEMA " + schemaPredicate(schema) +
-                        "AND ACTION_STATEMENT IS NOT NULL " +
-                        "AND UPPER(ACTION_STATEMENT) REGEXP " + GIS_FUNCTION_REGEX + " LIMIT 200",
+                sql("gis_function_in_triggers", schema, Map.of("{{GIS_FUNCTION_REGEX}}", GIS_FUNCTION_REGEX)),
                 schemaArg(schema)
         ));
         gisEvidence.addAll(queryList(
                 result,
                 "GIS function in events",
-                "SELECT EVENT_SCHEMA AS schema_name, EVENT_NAME AS object_name, " +
-                        "'EVENT' AS object_type, 'EVENT_DEFINITION' AS source, 'GIS_FUNCTION' AS detail " +
-                        "FROM information_schema.EVENTS " +
-                        "WHERE EVENT_SCHEMA " + schemaPredicate(schema) +
-                        "AND EVENT_DEFINITION IS NOT NULL " +
-                        "AND UPPER(EVENT_DEFINITION) REGEXP " + GIS_FUNCTION_REGEX + " LIMIT 200",
+                sql("gis_function_in_events", schema, Map.of("{{GIS_FUNCTION_REGEX}}", GIS_FUNCTION_REGEX)),
                 schemaArg(schema)
         ));
         gisEvidence.addAll(queryList(
                 result,
                 "GIS function in views",
-                "SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS object_name, " +
-                        "'VIEW' AS object_type, 'VIEW_DEFINITION' AS source, 'GIS_FUNCTION' AS detail " +
-                        "FROM information_schema.VIEWS " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) +
-                        "AND VIEW_DEFINITION IS NOT NULL " +
-                        "AND UPPER(VIEW_DEFINITION) REGEXP " + GIS_FUNCTION_REGEX + " LIMIT 200",
+                sql("gis_function_in_views", schema, Map.of("{{GIS_FUNCTION_REGEX}}", GIS_FUNCTION_REGEX)),
                 schemaArg(schema)
         ));
         result.setGisFunctionEvidence(gisEvidence);
@@ -439,45 +328,25 @@ public class MySqlInspectionService {
         xmlEvidence.addAll(queryList(
                 result,
                 "XML function in routines",
-                "SELECT ROUTINE_SCHEMA AS schema_name, ROUTINE_NAME AS object_name, " +
-                        "ROUTINE_TYPE AS object_type, 'ROUTINE_DEFINITION' AS source, 'XML_FUNCTION' AS detail " +
-                        "FROM information_schema.ROUTINES " +
-                        "WHERE ROUTINE_SCHEMA " + schemaPredicate(schema) +
-                        "AND ROUTINE_DEFINITION IS NOT NULL " +
-                        "AND UPPER(ROUTINE_DEFINITION) REGEXP " + XML_FUNCTION_REGEX + " LIMIT 200",
+                sql("xml_function_in_routines", schema, Map.of("{{XML_FUNCTION_REGEX}}", XML_FUNCTION_REGEX)),
                 schemaArg(schema)
         ));
         xmlEvidence.addAll(queryList(
                 result,
                 "XML function in triggers",
-                "SELECT TRIGGER_SCHEMA AS schema_name, TRIGGER_NAME AS object_name, " +
-                        "'TRIGGER' AS object_type, 'ACTION_STATEMENT' AS source, 'XML_FUNCTION' AS detail " +
-                        "FROM information_schema.TRIGGERS " +
-                        "WHERE TRIGGER_SCHEMA " + schemaPredicate(schema) +
-                        "AND ACTION_STATEMENT IS NOT NULL " +
-                        "AND UPPER(ACTION_STATEMENT) REGEXP " + XML_FUNCTION_REGEX + " LIMIT 200",
+                sql("xml_function_in_triggers", schema, Map.of("{{XML_FUNCTION_REGEX}}", XML_FUNCTION_REGEX)),
                 schemaArg(schema)
         ));
         xmlEvidence.addAll(queryList(
                 result,
                 "XML function in events",
-                "SELECT EVENT_SCHEMA AS schema_name, EVENT_NAME AS object_name, " +
-                        "'EVENT' AS object_type, 'EVENT_DEFINITION' AS source, 'XML_FUNCTION' AS detail " +
-                        "FROM information_schema.EVENTS " +
-                        "WHERE EVENT_SCHEMA " + schemaPredicate(schema) +
-                        "AND EVENT_DEFINITION IS NOT NULL " +
-                        "AND UPPER(EVENT_DEFINITION) REGEXP " + XML_FUNCTION_REGEX + " LIMIT 200",
+                sql("xml_function_in_events", schema, Map.of("{{XML_FUNCTION_REGEX}}", XML_FUNCTION_REGEX)),
                 schemaArg(schema)
         ));
         xmlEvidence.addAll(queryList(
                 result,
                 "XML function in views",
-                "SELECT TABLE_SCHEMA AS schema_name, TABLE_NAME AS object_name, " +
-                        "'VIEW' AS object_type, 'VIEW_DEFINITION' AS source, 'XML_FUNCTION' AS detail " +
-                        "FROM information_schema.VIEWS " +
-                        "WHERE TABLE_SCHEMA " + schemaPredicate(schema) +
-                        "AND VIEW_DEFINITION IS NOT NULL " +
-                        "AND UPPER(VIEW_DEFINITION) REGEXP " + XML_FUNCTION_REGEX + " LIMIT 200",
+                sql("xml_function_in_views", schema, Map.of("{{XML_FUNCTION_REGEX}}", XML_FUNCTION_REGEX)),
                 schemaArg(schema)
         ));
         result.setXmlFunctionEvidence(xmlEvidence);
@@ -498,8 +367,10 @@ public class MySqlInspectionService {
             }
 
             try {
-                String sql = "SHOW CREATE TABLE `" + escapeIdentifier(schemaName) + "`.`" +
-                        escapeIdentifier(tableName) + "`";
+                String sql = sql("show_create_table", null, Map.of(
+                        "{{SCHEMA_NAME}}", escapeIdentifier(schemaName),
+                        "{{TABLE_NAME}}", escapeIdentifier(tableName)
+                ));
                 Map<String, Object> ddlRow = jdbcTemplate.queryForMap(sql);
                 String ddl = extractCreateTableSql(ddlRow);
                 if (ddl != null) {
@@ -511,6 +382,99 @@ public class MySqlInspectionService {
             }
         }
         result.setTableDefinitions(definitions);
+    }
+
+    private String sql(String key) {
+        return sql(key, null, Map.of());
+    }
+
+    private String sql(String key, String schema) {
+        return sql(key, schema, Map.of());
+    }
+
+    private String sql(String key, String schema, Map<String, String> replacements) {
+        String template = SQL_TEMPLATES.get(key);
+        if (template == null) {
+            throw new IllegalArgumentException("SQL template not found: " + key);
+        }
+
+        Map<String, String> vars = new HashMap<>();
+        vars.put("{{SCHEMA_PREDICATE}}", schemaPredicate(schema));
+        if (replacements != null && !replacements.isEmpty()) {
+            vars.putAll(replacements);
+        }
+
+        String rendered = template;
+        for (Map.Entry<String, String> entry : vars.entrySet()) {
+            String value = entry.getValue();
+            if (value == null) {
+                continue;
+            }
+            rendered = rendered.replace(entry.getKey(), value);
+        }
+        return rendered;
+    }
+
+    private static Map<String, String> loadSqlTemplates() {
+        try (InputStream in = MySqlInspectionService.class.getResourceAsStream(SQL_RESOURCE)) {
+            if (in == null) {
+                throw new IllegalStateException("SQL resource not found: " + SQL_RESOURCE);
+            }
+
+            Map<String, String> templates = new LinkedHashMap<>();
+            Set<String> duplicated = new LinkedHashSet<>();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+                String currentName = null;
+                StringBuilder currentSql = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith(SQL_MARKER)) {
+                        if (currentName != null) {
+                            putSqlTemplate(templates, duplicated, currentName, currentSql.toString());
+                        }
+                        currentName = line.substring(SQL_MARKER.length()).trim();
+                        currentSql.setLength(0);
+                        continue;
+                    }
+                    if (currentName == null) {
+                        continue;
+                    }
+                    currentSql.append(line).append('\n');
+                }
+                if (currentName != null) {
+                    putSqlTemplate(templates, duplicated, currentName, currentSql.toString());
+                }
+            }
+
+            if (!duplicated.isEmpty()) {
+                throw new IllegalStateException("Duplicated SQL template name(s): " + String.join(", ", duplicated));
+            }
+            if (templates.isEmpty()) {
+                throw new IllegalStateException("No SQL templates loaded from " + SQL_RESOURCE);
+            }
+            return templates;
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to load SQL templates from " + SQL_RESOURCE, e);
+        }
+    }
+
+    private static void putSqlTemplate(Map<String, String> templates, Set<String> duplicated,
+                                       String name, String sql) {
+        String normalizedName = name == null ? "" : name.trim();
+        if (normalizedName.isEmpty()) {
+            return;
+        }
+
+        String normalizedSql = sql == null ? "" : sql.trim();
+        if (normalizedSql.isEmpty()) {
+            return;
+        }
+
+        if (templates.containsKey(normalizedName)) {
+            duplicated.add(normalizedName);
+            return;
+        }
+        templates.put(normalizedName, normalizedSql);
     }
 
     private List<Map<String, Object>> queryList(InspectionResult result, String label, String sql, Object... args) {
