@@ -47,6 +47,7 @@
     </dependencies>
 
     <build>
+        <finalName>mysql2tidbrepo</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
