@@ -34,6 +34,42 @@
 
 建议使用具备 `information_schema`、`performance_schema` 及 `mysql.func` 查询权限的账号，以获得完整报告。
 
+## MySQL 权限要求
+
+工具本身是只读扫描，不会执行 DDL/DML。建议使用单独的只读账号。
+
+### 最小权限（按单个业务库扫描）
+
+当你通过 `?schema=your_db` 或 `-d your_db` 只扫描一个库时，建议授权：
+
+```sql
+CREATE USER 'mysql_report'@'%' IDENTIFIED BY 'StrongPassword!';
+
+GRANT SELECT, SHOW VIEW ON `your_db`.* TO 'mysql_report'@'%';
+GRANT SELECT ON mysql.func TO 'mysql_report'@'%';
+GRANT SELECT ON performance_schema.user_variables_by_thread TO 'mysql_report'@'%';
+
+-- 可选：用于查看所有线程级用户变量（无该权限时该项可能不完整）
+GRANT PROCESS ON *.* TO 'mysql_report'@'%';
+```
+
+### 全库扫描权限（不指定 schema）
+
+如果不传 schema，程序会扫描所有非系统库，需要对所有业务库具备读取权限。可按库分别授权，或统一授权：
+
+```sql
+GRANT SELECT, SHOW VIEW ON *.* TO 'mysql_report'@'%';
+GRANT SELECT ON mysql.func TO 'mysql_report'@'%';
+GRANT SELECT ON performance_schema.user_variables_by_thread TO 'mysql_report'@'%';
+GRANT PROCESS ON *.* TO 'mysql_report'@'%';
+```
+
+```sql
+FLUSH PRIVILEGES;
+```
+
+权限不足时，对应检测项会在报告“扫描告警”中标记为查询失败。
+
 ## 打包
 
 ```bash
