@@ -34,10 +34,52 @@
 
 建议使用具备 `information_schema`、`performance_schema` 及 `mysql.func` 查询权限的账号，以获得完整报告。
 
+## 打包
+
+```bash
+mvn clean package
+```
+
+如果只想快速打包（跳过测试）：
+
+```bash
+mvn clean package -DskipTests
+```
+
+打包后产物位于：
+
+```text
+target/mysql-tidb-report-*.jar
+```
+
 ## 运行
+
+### 方式一：开发模式运行
 
 ```bash
 mvn spring-boot:run
+```
+
+### 方式二：运行打包后的 Jar
+
+```bash
+java -jar target/mysql-tidb-report-*.jar
+```
+
+支持通过短参数覆盖数据库连接配置（等价于覆盖 `spring.datasource.*`）：
+
+```bash
+java -jar target/mysql-tidb-report-*.jar -u root -h 127.0.0.1 -P 3306 -p'你的密码'
+```
+
+可选参数：
+
+- `-d` / `--database`：指定默认数据库名（不传则连接到 `host:port/`）
+
+示例：
+
+```bash
+java -jar target/mysql-tidb-report-*.jar -u root -h db.example.com -P 3306 -p'xxx' -d orders
 ```
 
 ## 访问
